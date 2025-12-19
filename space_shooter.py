@@ -13,6 +13,7 @@ import pygame
 import random
 import os
 import sys
+import json
 from PIL import Image
 
 # Initialize Pygame
@@ -362,10 +363,10 @@ class Bullet:
 class Enemy:
     """Enemy spaceship class"""
     
-    def __init__(self, x, y):
+    def __init__(self, x, y, speed_multiplier=1.0):
         self.x = x
         self.y = y
-        self.speed = 2
+        self.speed = 2 * speed_multiplier
         
         # Try to load enemy image
         try:
@@ -446,7 +447,18 @@ class Game:
         self.game_over = False
         self.paused = False
         self.score = 0
+        self.lives = 5
+        self.difficulty = "medium"  # easy, medium, hard
+        self.game_speed_multiplier = 1.0
+        self.high_scores = self.load_high_scores()  # Dictionary with high score per difficulty
+        self.leaderboards = self.load_leaderboards()
         self.selected_character = "player.png"
+        self.player_life_icon = None
+        self.player_name = ""
+        self.entering_name = False
+        self.name_error_message = ""
+        self.password_input = ""
+        self.password_error = ""
         
         # Game objects
         self.player = None
@@ -573,9 +585,10 @@ class Game:
         
         # Main menu
         self.main_menu_buttons = {
-            'start': Button(cx - 150, 300, 300, 60, "START", self.retro_font_medium),
-            'settings': Button(cx - 150, 380, 300, 60, "SETTINGS", self.retro_font_medium),
-            'quit': Button(cx - 150, 460, 300, 60, "QUIT", self.retro_font_medium)
+            'start': Button(cx - 150, 260, 300, 60, "START", self.retro_font_medium),
+            'leaderboard': Button(cx - 150, 340, 300, 60, "LEADERBOARD", self.retro_font_medium),
+            'settings': Button(cx - 150, 420, 300, 60, "SETTINGS", self.retro_font_medium),
+            'quit': Button(cx - 150, 500, 300, 60, "QUIT", self.retro_font_medium)
         }
         
         # Character selection
@@ -591,6 +604,33 @@ class Game:
                 'image': self.load_character_preview(char_file)
             })
         self.char_back_button = Button(50, 50, 150, 50, "BACK", self.retro_font_small)
+        
+        # Difficulty selection
+        self.difficulty_buttons = {
+            'easy': Button(cx - 350, 320, 200, 70, "EASY", self.retro_font_medium, GREEN, LIGHT_GRAY),
+            'medium': Button(cx - 100, 320, 200, 70, "MEDIUM", self.retro_font_medium, BLUE, LIGHT_GRAY),
+            'hard': Button(cx + 150, 320, 200, 70, "HARD", self.retro_font_medium, RED, LIGHT_GRAY)
+        }
+        self.difficulty_back_button = Button(50, 50, 150, 50, "BACK", self.retro_font_small)
+        
+        # Leaderboard
+        self.leaderboard_buttons = {
+            'easy': Button(cx - 380, 180, 230, 50, "EASY", self.retro_font_small, GREEN, LIGHT_GRAY),
+            'medium': Button(cx - 115, 180, 230, 50, "MEDIUM", self.retro_font_small, BLUE, LIGHT_GRAY),
+            'hard': Button(cx + 150, 180, 230, 50, "HARD", self.retro_font_small, RED, LIGHT_GRAY)
+        }
+        self.leaderboard_back_button = Button(cx - 100, 650, 200, 50, "BACK", self.retro_font_medium)
+        self.clear_leaderboard_button = Button(cx + 300, 650, 180, 50, "CLEAR ALL", self.retro_font_small, RED, LIGHT_GRAY)
+        self.active_leaderboard = "medium"
+        
+        # Password entry (for clearing leaderboards)
+        self.password_entry_rect = pygame.Rect(cx - 200, 300, 400, 50)
+        self.submit_password_button = Button(cx - 100, 380, 200, 50, "SUBMIT", self.retro_font_medium)
+        self.cancel_password_button = Button(cx - 100, 450, 200, 50, "CANCEL", self.retro_font_medium)
+        
+        # Name entry (for high score)
+        self.name_entry_rect = pygame.Rect(cx - 200, 300, 400, 50)
+        self.submit_name_button = Button(cx - 100, 380, 200, 50, "SUBMIT", self.retro_font_medium)
         
         # Settings
         self.sfx_slider = Slider(cx - 200, 250, 400, 20, 0, 100, self.sfx_volume * 100, "SFX Volume")
@@ -610,6 +650,13 @@ class Game:
             'yes': Button(cx - 200, 350, 150, 60, "YES", self.retro_font_medium, RED, LIGHT_GRAY),
             'no': Button(cx + 50, 350, 150, 60, "NO", self.retro_font_medium, GREEN, LIGHT_GRAY)
         }
+        
+        # Pause menu
+        self.pause_buttons = {
+            'resume': Button(cx - 150, 300, 300, 60, "RESUME", self.retro_font_medium),
+            'settings': Button(cx - 150, 380, 300, 60, "SETTINGS", self.retro_font_medium),
+            'menu': Button(cx - 150, 460, 300, 60, "QUIT TO MENU", self.retro_font_medium)
+        }
     
     def load_character_preview(self, filename):
         """Load and scale character preview"""
@@ -619,23 +666,111 @@ class Game:
         except:
             return None
     
+    def load_player_life_icon(self):
+        """Load player life icon (small version of selected ship)"""
+        try:
+            img = pygame.image.load(get_image_path(self.selected_character))
+            self.player_life_icon = pygame.transform.scale(img, (30, 30))
+        except:
+            self.player_life_icon = None
+    
+    def load_high_scores(self):
+        """Load high scores from file"""
+        try:
+            if os.path.exists("high_scores.json"):
+                with open("high_scores.json", "r") as f:
+                    return json.load(f)
+        except:
+            pass
+        return {"easy": 0, "medium": 0, "hard": 0}
+    
+    def save_high_scores(self):
+        """Save high scores to file"""
+        try:
+            with open("high_scores.json", "w") as f:
+                json.dump(self.high_scores, f, indent=2)
+        except Exception as e:
+            print(f"Error saving high scores: {e}")
+    
+    def load_leaderboards(self):
+        """Load leaderboards from file"""
+        try:
+            if os.path.exists("leaderboards.json"):
+                with open("leaderboards.json", "r") as f:
+                    return json.load(f)
+        except:
+            pass
+        return {"easy": [], "medium": [], "hard": []}
+    
+    def save_leaderboards(self):
+        """Save leaderboards to file"""
+        try:
+            with open("leaderboards.json", "w") as f:
+                json.dump(self.leaderboards, f, indent=2)
+        except Exception as e:
+            print(f"Error saving leaderboards: {e}")
+    
+    def add_to_leaderboard(self, name, score, difficulty):
+        """Add score to leaderboard and keep top 10"""
+        entry = {"name": name[:10], "score": score}  # Limit name to 10 chars
+        self.leaderboards[difficulty].append(entry)
+        # Sort by score (descending) and keep top 10
+        self.leaderboards[difficulty].sort(key=lambda x: x["score"], reverse=True)
+        self.leaderboards[difficulty] = self.leaderboards[difficulty][:10]
+        self.save_leaderboards()
+    
+    def validate_name(self, name):
+        """Validate player name for leaderboard"""
+        # Check if empty
+        if not name or name.strip() == "":
+            return False, "Please enter a name!"
+        
+        # Check if name already exists in this difficulty's leaderboard
+        leaderboard = self.leaderboards[self.difficulty]
+        for entry in leaderboard:
+            if entry["name"].upper() == name.upper():
+                return False, "Username already taken!"
+        
+        return True, ""
+    
+    def clear_all_leaderboards(self):
+        """Clear all leaderboards and high scores"""
+        self.leaderboards = {"easy": [], "medium": [], "hard": []}
+        self.high_scores = {"easy": 0, "medium": 0, "hard": 0}
+        self.save_leaderboards()
+        self.save_high_scores()
+        print("All leaderboards and high scores cleared!")
+    
     def start_game(self):
         """Start the game"""
         self.state = "PLAYING"
         self.game_over = False
         self.paused = False
         self.score = 0
+        
+        # Set lives based on difficulty
+        if self.difficulty == "easy":
+            self.lives = 7
+            self.game_speed_multiplier = 1.0
+        elif self.difficulty == "medium":
+            self.lives = 5
+            self.game_speed_multiplier = 1.08
+        else:  # hard
+            self.lives = 3
+            self.game_speed_multiplier = 1.15
+        
         self.player = Player(SCREEN_WIDTH // 2 - 40, SCREEN_HEIGHT - 120, self.selected_character)
         self.bullets = []
         self.enemies = []
         self.enemy_spawn_timer = 0
+        self.load_player_life_icon()
         self.play_music("gameplay")
     
     def spawn_enemy(self):
         """Spawn enemy"""
-        temp = Enemy(0, -100)
+        temp = Enemy(0, -100, self.game_speed_multiplier)
         x = random.randint(0, SCREEN_WIDTH - temp.width)
-        self.enemies.append(Enemy(x, -temp.height))
+        self.enemies.append(Enemy(x, -temp.height, self.game_speed_multiplier))
     
     def shoot_bullet(self):
         """Shoot bullet"""
@@ -657,14 +792,38 @@ class Game:
                     self.play_sound('explosion')
                     break
         
+        # Check enemy collision with player
         if self.player:
-            for enemy in self.enemies:
+            for enemy in self.enemies[:]:
                 if self.player.get_rect().colliderect(enemy.get_rect()):
-                    self.game_over = True
-                    self.state = "GAME_OVER"
-                    pygame.mixer.music.stop()
-                    self.play_sound('game_over')
+                    if enemy in self.enemies:
+                        self.enemies.remove(enemy)
+                    self.lives -= 1
+                    self.play_sound('explosion')
+                    if self.lives <= 0:
+                        self.end_game()
                     break
+    
+    def end_game(self):
+        """End the game and update high score"""
+        self.game_over = True
+        pygame.mixer.music.stop()
+        self.play_sound('game_over')
+        
+        # Update high score for this difficulty if needed
+        if self.score > self.high_scores[self.difficulty]:
+            self.high_scores[self.difficulty] = self.score
+            self.save_high_scores()
+        
+        # Check if score qualifies for leaderboard (top 10 or less than 10 entries)
+        leaderboard = self.leaderboards[self.difficulty]
+        if len(leaderboard) < 10 or self.score > leaderboard[-1]["score"]:
+            self.entering_name = True
+            self.player_name = ""
+            self.name_error_message = ""
+            self.state = "NAME_ENTRY"
+        else:
+            self.state = "GAME_OVER"
     
     def update_game(self):
         """Update game"""
@@ -680,6 +839,10 @@ class Game:
             enemy.update()
             if enemy.is_off_screen():
                 self.enemies.remove(enemy)
+                # Lose a life when enemy passes through
+                self.lives -= 1
+                if self.lives <= 0:
+                    self.end_game()
         
         self.enemy_spawn_timer += 1
         if self.enemy_spawn_timer >= self.enemy_spawn_delay:
@@ -784,8 +947,23 @@ class Game:
         for enemy in self.enemies:
             enemy.draw(self.screen)
         
+        # Draw score
         score_text = self.retro_font_medium.render(f"SCORE: {self.score}", True, YELLOW)
         self.screen.blit(score_text, (10, 10))
+        
+        # Draw high score for current difficulty
+        high_score_text = self.retro_font_small.render(f"HIGH SCORE: {self.high_scores[self.difficulty]}", True, WHITE)
+        self.screen.blit(high_score_text, (10, 50))
+        
+        # Draw lives with player icon
+        lives_text = self.retro_font_medium.render(str(self.lives), True, GREEN)
+        lives_x = SCREEN_WIDTH - 80
+        self.screen.blit(lives_text, (lives_x, 10))
+        
+        # Draw player life icon
+        if self.player_life_icon:
+            icon_x = lives_x - 40
+            self.screen.blit(self.player_life_icon, (icon_x, 15))
     
     def draw_game_over(self):
         """Draw game over"""
@@ -796,6 +974,9 @@ class Game:
         
         score_text = self.retro_font_large.render(f"FINAL SCORE: {self.score}", True, WHITE)
         self.screen.blit(score_text, score_text.get_rect(center=(SCREEN_WIDTH // 2, 310)))
+        
+        high_score_text = self.retro_font_medium.render(f"HIGH SCORE: {self.high_scores[self.difficulty]}", True, YELLOW)
+        self.screen.blit(high_score_text, high_score_text.get_rect(center=(SCREEN_WIDTH // 2, 360)))
         
         mouse_pos = pygame.mouse.get_pos()
         for button in self.game_over_buttons.values():
@@ -833,9 +1014,20 @@ class Game:
         for enemy in self.enemies:
             enemy.draw(self.screen)
         
-        # Draw score
+        # Draw score and lives (frozen state)
         score_text = self.retro_font_medium.render(f"SCORE: {self.score}", True, YELLOW)
         self.screen.blit(score_text, (10, 10))
+        
+        high_score_text = self.retro_font_small.render(f"HIGH SCORE: {self.high_scores[self.difficulty]}", True, WHITE)
+        self.screen.blit(high_score_text, (10, 50))
+        
+        lives_text = self.retro_font_medium.render(str(self.lives), True, GREEN)
+        lives_x = SCREEN_WIDTH - 80
+        self.screen.blit(lives_text, (lives_x, 10))
+        
+        if self.player_life_icon:
+            icon_x = lives_x - 40
+            self.screen.blit(self.player_life_icon, (icon_x, 15))
         
         # Draw semi-transparent overlay
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -857,6 +1049,132 @@ class Game:
             button.check_hover(mouse_pos)
             button.draw(self.screen)
     
+    def draw_difficulty_select(self):
+        """Draw difficulty selection"""
+        self.draw_background()
+        
+        title = self.retro_font_large.render("SELECT DIFFICULTY", True, YELLOW)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 120)))
+        
+        mouse_pos = pygame.mouse.get_pos()
+        
+        # Draw buttons and show info only on hover
+        for diff, button in self.difficulty_buttons.items():
+            button.check_hover(mouse_pos)
+            button.draw(self.screen)
+            
+            # Show difficulty info only when hovering
+            if button.is_hovered:
+                if diff == "easy":
+                    info_text = "7 Lives | Normal Speed"
+                elif diff == "medium":
+                    info_text = "5 Lives | 8% Faster"
+                else:  # hard
+                    info_text = "3 Lives | 15% Faster"
+                
+                info = self.retro_font_small.render(info_text, True, WHITE)
+                self.screen.blit(info, info.get_rect(center=(button.rect.centerx, button.rect.bottom + 30)))
+        
+        self.difficulty_back_button.check_hover(mouse_pos)
+        self.difficulty_back_button.draw(self.screen)
+    
+    def draw_leaderboard(self):
+        """Draw leaderboard"""
+        self.draw_background()
+        
+        title = self.retro_font_large.render("LEADERBOARD", True, YELLOW)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 80)))
+        
+        # Draw difficulty tabs
+        mouse_pos = pygame.mouse.get_pos()
+        for diff, button in self.leaderboard_buttons.items():
+            if diff == self.active_leaderboard:
+                # Highlight active tab
+                pygame.draw.rect(self.screen, button.color, button.rect.inflate(4, 4), border_radius=8)
+            button.check_hover(mouse_pos)
+            button.draw(self.screen)
+        
+        # Draw leaderboard entries
+        leaderboard = self.leaderboards[self.active_leaderboard]
+        y_start = 260
+        for i, entry in enumerate(leaderboard):
+            rank_text = self.retro_font_small.render(f"#{i+1}", True, YELLOW)
+            name_text = self.retro_font_small.render(entry["name"], True, WHITE)
+            score_text = self.retro_font_small.render(str(entry["score"]), True, GREEN)
+            
+            self.screen.blit(rank_text, (200, y_start + i * 35))
+            self.screen.blit(name_text, (300, y_start + i * 35))
+            self.screen.blit(score_text, (900, y_start + i * 35))
+        
+        # If leaderboard is empty
+        if not leaderboard:
+            empty_text = self.retro_font_medium.render("No scores yet!", True, GRAY)
+            self.screen.blit(empty_text, empty_text.get_rect(center=(SCREEN_WIDTH // 2, 400)))
+        
+        self.leaderboard_back_button.check_hover(mouse_pos)
+        self.leaderboard_back_button.draw(self.screen)
+        
+        self.clear_leaderboard_button.check_hover(mouse_pos)
+        self.clear_leaderboard_button.draw(self.screen)
+    
+    def draw_name_entry(self):
+        """Draw name entry screen"""
+        self.draw_background()
+        
+        title = self.oleaguid_font.render("NEW HIGH SCORE!", True, YELLOW)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 150)))
+        
+        score_text = self.retro_font_large.render(f"Score: {self.score}", True, WHITE)
+        self.screen.blit(score_text, score_text.get_rect(center=(SCREEN_WIDTH // 2, 230)))
+        
+        prompt = self.retro_font_small.render("Enter your name (max 10 characters):", True, WHITE)
+        self.screen.blit(prompt, prompt.get_rect(center=(SCREEN_WIDTH // 2, 270)))
+        
+        # Draw input box
+        pygame.draw.rect(self.screen, WHITE, self.name_entry_rect, 3)
+        name_surface = self.retro_font_medium.render(self.player_name + "_", True, WHITE)
+        self.screen.blit(name_surface, (self.name_entry_rect.x + 10, self.name_entry_rect.y + 10))
+        
+        # Draw error message if any
+        if self.name_error_message:
+            error_surface = self.retro_font_small.render(self.name_error_message, True, RED)
+            self.screen.blit(error_surface, error_surface.get_rect(center=(SCREEN_WIDTH // 2, 360)))
+        
+        mouse_pos = pygame.mouse.get_pos()
+        self.submit_name_button.check_hover(mouse_pos)
+        self.submit_name_button.draw(self.screen)
+    
+    def draw_password_entry(self):
+        """Draw password entry screen for clearing leaderboards"""
+        self.draw_background()
+        
+        title = self.retro_font_large.render("ADMIN ACCESS", True, RED)
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 150)))
+        
+        warning = self.retro_font_medium.render("Clear All Leaderboards?", True, YELLOW)
+        self.screen.blit(warning, warning.get_rect(center=(SCREEN_WIDTH // 2, 220)))
+        
+        prompt = self.retro_font_small.render("Enter admin password:", True, WHITE)
+        self.screen.blit(prompt, prompt.get_rect(center=(SCREEN_WIDTH // 2, 270)))
+        
+        # Draw password input box (show asterisks)
+        pygame.draw.rect(self.screen, WHITE, self.password_entry_rect, 3)
+        password_display = "*" * len(self.password_input) + "_"
+        password_surface = self.retro_font_medium.render(password_display, True, WHITE)
+        self.screen.blit(password_surface, (self.password_entry_rect.x + 10, self.password_entry_rect.y + 10))
+        
+        # Draw error message if any
+        if self.password_error:
+            error_surface = self.retro_font_small.render(self.password_error, True, RED)
+            self.screen.blit(error_surface, error_surface.get_rect(center=(SCREEN_WIDTH // 2, 360)))
+        
+        mouse_pos = pygame.mouse.get_pos()
+        self.submit_password_button.check_hover(mouse_pos)
+        self.submit_password_button.draw(self.screen)
+        
+        self.cancel_password_button.check_hover(mouse_pos)
+        self.cancel_password_button.draw(self.screen)
+    
     def handle_events(self):
         """Handle events"""
         mouse_pos = pygame.mouse.get_pos()
@@ -866,8 +1184,44 @@ class Game:
                 self.running = False
             
             elif event.type == pygame.KEYDOWN:
+                # Password entry
+                if self.state == "PASSWORD_ENTRY":
+                    if event.key == pygame.K_RETURN:
+                        if self.password_input == "admin123":
+                            self.clear_all_leaderboards()
+                            self.password_input = ""
+                            self.password_error = ""
+                            self.state = "LEADERBOARD"
+                        else:
+                            self.password_error = "Incorrect password!"
+                    elif event.key == pygame.K_BACKSPACE:
+                        self.password_input = self.password_input[:-1]
+                        self.password_error = ""
+                    elif event.key == pygame.K_ESCAPE:
+                        self.password_input = ""
+                        self.password_error = ""
+                        self.state = "LEADERBOARD"
+                    elif len(self.password_input) < 20 and event.unicode.isprintable():
+                        self.password_input += event.unicode
+                        self.password_error = ""
+                # Name entry
+                elif self.state == "NAME_ENTRY":
+                    if event.key == pygame.K_RETURN:
+                        is_valid, error_msg = self.validate_name(self.player_name)
+                        if is_valid:
+                            self.add_to_leaderboard(self.player_name, self.score, self.difficulty)
+                            self.entering_name = False
+                            self.state = "GAME_OVER"
+                        else:
+                            self.name_error_message = error_msg
+                    elif event.key == pygame.K_BACKSPACE:
+                        self.player_name = self.player_name[:-1]
+                        self.name_error_message = ""  # Clear error when typing
+                    elif len(self.player_name) < 10 and event.unicode.isprintable():
+                        self.player_name += event.unicode.upper()
+                        self.name_error_message = ""  # Clear error when typing
                 # Only allow ESC to pause during active gameplay
-                if event.key == pygame.K_ESCAPE and self.state == "PLAYING" and not self.game_over:
+                elif event.key == pygame.K_ESCAPE and self.state == "PLAYING" and not self.game_over:
                     self.paused = not self.paused
                 # Allow shooting only when not paused
                 elif event.key == pygame.K_SPACE and self.state == "PLAYING" and not self.game_over and not self.paused:
@@ -876,6 +1230,8 @@ class Game:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if self.state == "PLAYING" and self.paused:
                     self.handle_pause_click(mouse_pos)
+                elif self.state == "SETTINGS":
+                    self.handle_mouse_click(mouse_pos)
                 else:
                     self.handle_mouse_click(mouse_pos)
             
@@ -899,7 +1255,10 @@ class Game:
         if self.state == "MAIN_MENU":
             if self.main_menu_buttons['start'].rect.collidepoint(mouse_pos):
                 self.play_sound('click')
-                self.state = "CHARACTER_SELECT"
+                self.state = "DIFFICULTY_SELECT"
+            elif self.main_menu_buttons['leaderboard'].rect.collidepoint(mouse_pos):
+                self.play_sound('click')
+                self.state = "LEADERBOARD"
             elif self.main_menu_buttons['settings'].rect.collidepoint(mouse_pos):
                 self.play_sound('click')
                 self.state = "SETTINGS"
@@ -910,7 +1269,7 @@ class Game:
         elif self.state == "CHARACTER_SELECT":
             if self.char_back_button.rect.collidepoint(mouse_pos):
                 self.play_sound('click')
-                self.state = "MAIN_MENU"
+                self.state = "DIFFICULTY_SELECT"
             else:
                 for char in self.character_buttons:
                     if char['button'].rect.collidepoint(mouse_pos):
@@ -919,10 +1278,70 @@ class Game:
                         self.start_game()
                         break
         
+        elif self.state == "DIFFICULTY_SELECT":
+            if self.difficulty_back_button.rect.collidepoint(mouse_pos):
+                self.play_sound('click')
+                self.state = "MAIN_MENU"
+            else:
+                for diff, button in self.difficulty_buttons.items():
+                    if button.rect.collidepoint(mouse_pos):
+                        self.play_sound('click')
+                        self.difficulty = diff
+                        self.state = "CHARACTER_SELECT"
+                        break
+        
+        elif self.state == "LEADERBOARD":
+            if self.leaderboard_back_button.rect.collidepoint(mouse_pos):
+                self.play_sound('click')
+                self.state = "MAIN_MENU"
+            elif self.clear_leaderboard_button.rect.collidepoint(mouse_pos):
+                self.play_sound('click')
+                self.password_input = ""
+                self.password_error = ""
+                self.state = "PASSWORD_ENTRY"
+            else:
+                for diff, button in self.leaderboard_buttons.items():
+                    if button.rect.collidepoint(mouse_pos):
+                        self.play_sound('click')
+                        self.active_leaderboard = diff
+                        break
+        
+        elif self.state == "NAME_ENTRY":
+            if self.submit_name_button.rect.collidepoint(mouse_pos):
+                is_valid, error_msg = self.validate_name(self.player_name)
+                if is_valid:
+                    self.play_sound('click')
+                    self.add_to_leaderboard(self.player_name, self.score, self.difficulty)
+                    self.entering_name = False
+                    self.state = "GAME_OVER"
+                else:
+                    self.name_error_message = error_msg
+        
+        elif self.state == "PASSWORD_ENTRY":
+            if self.submit_password_button.rect.collidepoint(mouse_pos):
+                if self.password_input == "admin123":
+                    self.play_sound('click')
+                    self.clear_all_leaderboards()
+                    self.password_input = ""
+                    self.password_error = ""
+                    self.state = "LEADERBOARD"
+                else:
+                    self.password_error = "Incorrect password!"
+            elif self.cancel_password_button.rect.collidepoint(mouse_pos):
+                self.play_sound('click')
+                self.password_input = ""
+                self.password_error = ""
+                self.state = "LEADERBOARD"
+        
         elif self.state == "SETTINGS":
             if self.settings_back_button.rect.collidepoint(mouse_pos):
                 self.play_sound('click')
-                self.state = "MAIN_MENU"
+                # Return to previous state (could be MAIN_MENU or paused PLAYING)
+                if hasattr(self, 'previous_state') and self.previous_state == "PLAYING":
+                    self.state = "PLAYING"
+                    self.previous_state = None
+                else:
+                    self.state = "MAIN_MENU"
             elif self.fullscreen_checkbox.handle_click(mouse_pos):
                 self.play_sound('click')
                 self.toggle_fullscreen()
@@ -955,6 +1374,10 @@ class Game:
         if self.pause_buttons['resume'].rect.collidepoint(mouse_pos):
             self.play_sound('click')
             self.paused = False
+        elif self.pause_buttons['settings'].rect.collidepoint(mouse_pos):
+            self.play_sound('click')
+            self.previous_state = "PLAYING"
+            self.state = "SETTINGS"
         elif self.pause_buttons['menu'].rect.collidepoint(mouse_pos):
             self.play_sound('click')
             self.state = "MAIN_MENU"
@@ -975,8 +1398,16 @@ class Game:
                     self.draw_paused()
             elif self.state == "MAIN_MENU":
                 self.draw_main_menu()
+            elif self.state == "DIFFICULTY_SELECT":
+                self.draw_difficulty_select()
             elif self.state == "CHARACTER_SELECT":
                 self.draw_character_select()
+            elif self.state == "LEADERBOARD":
+                self.draw_leaderboard()
+            elif self.state == "NAME_ENTRY":
+                self.draw_name_entry()
+            elif self.state == "PASSWORD_ENTRY":
+                self.draw_password_entry()
             elif self.state == "SETTINGS":
                 self.draw_settings()
             elif self.state == "GAME_OVER":
